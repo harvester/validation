@@ -1,0 +1,12 @@
+FROM python:3.7.0
+
+ARG KUBECTL_VERSION=v1.12.0
+ENV WORKSPACE /src/harvester-validation
+WORKDIR $WORKSPACE
+ENV PYTHONPATH /src/harvester-validation
+ARG RKE_VERSION=v0.1.17
+
+COPY [".", "$WORKSPACE"]
+
+RUN cd $WORKSPACE && \
+    pip install -r requirements_v1api

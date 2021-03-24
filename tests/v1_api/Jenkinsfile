@@ -1,0 +1,62 @@
+// Job Params
+// Requires: PYTEST_OPTIONS, CATTLE_TEST_URL, ADMIN_USER, ADMIN_PASSWORD, SLACK_TOKEN
+// Optional: DEBUG, SLACK_TEAMDOMAIN
+
+node {
+  def rootPath = "/src/harvester-validation/"
+  def testContainer = "${JOB_NAME}${env.BUILD_NUMBER}_test"
+  def setupResultsOut = "setup-results.xml"
+  def testResultsOut = "results.xml"
+  def imageName = "harvester-validation-${JOB_NAME}${env.BUILD_NUMBER}"
+  def testsDir = "tests/v1_api/"
+
+  def branch = "master"
+  if ("${env.branch}" != "null" && "${env.branch}" != "") {
+    branch = "${env.branch}"
+  }
+
+  def teamDomain = "rancher"
+  if ("${env.SLACK_TEAMDOMAIN}" != "null" && "${env.SLACK_TEAMDOMAIN}" != "") {
+    teamDomain = "${env.SLACK_TEAMDOMAIN}"
+  }
+
+  timestamps {
+    wrap([$class: 'AnsiColorBuildWrapper', 'colorMapName': 'XTerm', 'defaultFg': 2, 'defaultBg':1]) {
+      stage('Checkout') {
+        deleteDir()
+        checkout([
+                $class: 'GitSCM',
+                branches: [[name: "*/${branch}"]],
+                extensions: scm.extensions + [[$class: 'CleanCheckout']],
+                userRemoteConfigs: scm.userRemoteConfigs
+              ])
+      }
+      stage('Configure and Build') {
+        sh "./tests/v1_api/scripts/configure.sh"
+        sh "./tests/v1_api/scripts/build.sh"
+      }
+      try {
+        stage('Run Validation Tests') {
+          try {
+            sh "docker run --name ${testContainer}  --env-file .env " +
+             "${imageName} /bin/bash -c \'pytest -v -s --junit-xml=${testResultsOut} ${PYTEST_OPTIONS} ${testsDir}\'"
+          } catch(err) {
+            echo 'Test run had failures. Collecting results...'
+          }
+        }
+
+        stage('Test Report') {
+          sh "docker cp ${testContainer}:${rootPath}${testResultsOut} ."
+          step([$class: 'JUnitResultArchiver', testResults: "**/${testResultsOut}"])
+          slackSend message: "Pipeline ${JOB_NAME} #${env.BUILD_NUMBER} finished. Test URL: ${env.BUILD_URL}testReport/", teamDomain: "${teamDomain}", tokenCredentialId: "${env.SLACK_TOKEN}"
+          sh "docker rm -v ${testContainer}"
+          sh "docker rmi ${imageName}"
+        }
+      } catch(err){
+        sh "docker stop ${testContainer}"
+        sh "docker rm -v ${testContainer}"
+        sh "docker rmi ${imageName}"
+      }
+    }
+  }
+}
